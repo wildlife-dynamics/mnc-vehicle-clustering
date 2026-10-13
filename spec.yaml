@@ -1,0 +1,392 @@
+# Written by Ecoscope Studio from the design “mnc-vehicle-clustering”. Edit it in Studio's designer;
+# changes made here are replaced the next time the design is saved.
+id: vehicle_clustering
+requirements:
+- name: ecoscope-platform
+  version: ==2.25.3
+  channel: https://repo.prefix.dev/ecoscope-workflows/
+- name: ecoscope-workflows-ext-custom
+  version: ==0.1.0rc14
+  channel: https://repo.prefix.dev/ecoscope-workflows-custom/
+- name: ecoscope-workflows-ext-mep
+  version: ==1.0.8
+  channel: https://repo.prefix.dev/ecoscope-workflows-custom/
+- name: ecoscope-workflows-ext-ste
+  version: ==0.0.0rc1
+  channel: https://repo.prefix.dev/ecoscope-workflows-custom/
+- name: ecoscope-workflows-ext-mnc
+  version: ==1.0.6
+  channel: https://repo.prefix.dev/ecoscope-workflows-custom/
+- name: pydeck
+  version: ==0.9.2
+  channel: conda-forge
+task-instance-defaults:
+  skipif:
+    conditions:
+    - any_is_empty_df
+    - any_dependency_skipped
+workflow:
+- name: Set Workflow Details
+  id: workflow_details
+  task: set_workflow_details
+- name: Set Time Range
+  id: time_range
+  task: set_time_range
+  partial:
+    time_format: '%d %b %Y %H:%M:%S'
+- name: Set Groupers
+  id: groupers
+  task: set_groupers
+  partial:
+    groupers: null
+- name: Basemap URLs
+  id: base_maps_pydeck
+  task: set_base_maps_pydeck
+- name: Connect to EarthRanger
+  id: er_connection
+  task: set_er_connection
+- name: Subject Group
+  id: get_subject_group
+  task: get_subjectgroup_observations
+  partial:
+    client: ${{ workflow.er_connection.return }}
+    time_range: ${{ workflow.time_range.return }}
+    raise_on_empty: true
+    include_details: false
+    include_subjectsource_details: false
+    filter: clean
+    include_subject_additional: false
+- name: Get Spatial Features Group
+  id: spatial_features_group
+  task: get_spatial_features_group
+  partial:
+    client: ${{ workflow.er_connection.return }}
+    spatial_features_group_name: Boundary
+- name: Process Relocations
+  id: relocations
+  task: process_relocations
+  partial:
+    observations: ${{ workflow.get_subject_group.return }}
+    filter_point_coords:
+    - x: 180
+      y: 90
+    - x: 0
+      y: 0
+    - x: 1
+      y: 1
+    relocs_columns:
+    - extra__subject_id
+    - extra__id
+    - extra__location
+    - extra__created_at
+    - extra__recorded_at
+    - extra__source
+    - extra__exclusion_flags
+    - extra__subject__updated_at
+    - extra__subject__name
+    - extra__subject__hex
+    - extra__subject__sex
+    - extra__subject__subject_subtype
+    - geometry
+    - groupby_col
+    - fixtime
+    - junk_status
+- name: Compute View State From Gdf
+  id: view_state_from_gdf
+  task: compute_view_state_from_gdf
+  partial:
+    gdf: ${{ workflow.spatial_features_group.return }}
+    pitch: 0
+    bearing: 0
+    max_zoom: 18.0
+- name: Spatial Feature Overlay
+  id: spatial_feature_layer
+  task: ecoscope_workflows_ext_custom.tasks.results.create_geojson_layer
+  partial:
+    geodataframe: ${{ workflow.spatial_features_group.return }}
+    legend:
+      title: Conservancy
+      values:
+      - label: Boundaries
+        color: '#000000'
+    layer_style:
+      auto_highlight: false
+      opacity: 1
+      pickable: true
+      filled: false
+      stroked: true
+      extruded: false
+      wireframe: false
+      get_fill_color: '[0, 0, 0]'
+      get_line_color: '[0, 0, 0]'
+      get_line_width: 1
+      get_elevation: null
+      get_point_radius: 1
+      line_width_units: pixels
+      line_width_scale: 1
+      line_width_min_pixels: 0
+      line_width_max_pixels: null
+      line_miter_limit: 4
+      line_joint_rounded: false
+      elevation_scale: 1
+      point_radius_units: pixels
+      point_radius_scale: 1
+      point_radius_min_pixels: 0
+      point_radius_max_pixels: null
+      billboard: false
+    data_url: null
+- name: Create Meshgrid
+  id: meshgrid
+  task: create_meshgrid
+  partial:
+    aoi: ${{ workflow.spatial_features_group.return }}
+    intersecting_only: true
+    auto_scale_or_custom_cell_size:
+      auto_scale_or_custom: Customize
+      grid_cell_size: 1000
+    crs: EPSG:3857
+- name: Projected Spatial
+  id: projected_spatial
+  task: convert_crs
+  partial:
+    df: ${{ workflow.spatial_features_group.return }}
+    crs: EPSG:3857
+- name: Relocations To Trajectory
+  id: to_trajectory
+  task: relocations_to_trajectory
+  partial:
+    relocations: ${{ workflow.relocations.return }}
+    trajectory_segment_filter:
+      min_length_meters: 0.001
+      max_length_meters: 5000
+      min_time_secs: 1
+      max_time_secs: 21600
+      min_speed_kmhr: 0.025
+      max_speed_kmhr: 100
+- name: Overlay Meshgrid with Projected Spatial Layer
+  id: overlay_spatial_meshgrid
+  task: overlay_gdf
+  partial:
+    left: ${{ workflow.meshgrid.return }}
+    right: ${{ workflow.projected_spatial.return }}
+    how: intersection
+    keep_geom_type: null
+    make_valid: true
+- name: Persist Trajectories
+  id: persist_trajectories
+  task: persist_df
+  partial:
+    root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+    df: ${{ workflow.to_trajectory.return }}
+    filename: trajectories
+    filetype: parquet
+- name: Calculate Linear Time Density
+  id: linear_time_density
+  task: calculate_linear_time_density
+  partial:
+    trajectory_gdf: ${{ workflow.to_trajectory.return }}
+    meshgrid: ${{ workflow.overlay_spatial_meshgrid.return }}
+    percentiles:
+    - '50'
+    - '60'
+    - '70'
+    - '80'
+    - '90'
+    - '100'
+- name: Detect Vehicle Clusters Over Time
+  id: vehicle_clusters_over_time
+  task: detect_vehicle_clusters_over_time
+  partial:
+    trajectories: ${{ workflow.to_trajectory.return }}
+    aoi: ${{ workflow.spatial_features_group.return }}
+    interval_minutes: 10
+    radius_meters: 50
+    min_vehicles: 6
+    max_speed_kmh: 50
+    zones: null
+    zone_buffer_meters: 0
+- name: Apply Color Map
+  id: color_map
+  task: apply_color_map
+  partial:
+    df: ${{ workflow.linear_time_density.return }}
+    input_column_name: percentile
+    colormap: RdYlGn
+    output_column_name: percentile_colors
+- name: Create Scatterplot Layer
+  id: scatterplot_layer
+  task: ecoscope_workflows_ext_custom.tasks.results.create_scatterplot_layer
+  partial:
+    geodataframe: ${{ workflow.vehicle_clusters_over_time.return }}
+    layer_style:
+      auto_highlight: true
+      opacity: 0.75
+      pickable: true
+      get_position: geometry.coordinates
+      get_fill_color: '[30, 144, 255]'
+      get_line_color: '[0, 0, 0]'
+      get_radius: vehicle_count
+      get_line_width: 2.25
+      get_elevation: null
+      radius_units: pixels
+      radius_scale: 1
+      radius_min_pixels: 0
+      radius_max_pixels: null
+      line_width_units: pixels
+      line_width_scale: 1
+      line_width_min_pixels: 0
+      line_width_max_pixels: null
+      stroked: true
+      filled: true
+      elevation_scale: 1
+      billboard: false
+    legend:
+      values:
+      - label: Cluster
+        color: '#1e90ff'
+      title: Legend
+    data_url: null
+- name: Group Cluster Episodes
+  id: cluster_episodes
+  task: group_cluster_episodes
+  partial:
+    snapshot_clusters: ${{ workflow.vehicle_clusters_over_time.return }}
+    interval_minutes: 10
+    max_gap_minutes: 10
+    min_duration_minutes: 0
+- name: Episode Vehicle Minutes
+  id: vehicle_minutes
+  task: episode_vehicle_minutes
+  partial:
+    snapshot_clusters: ${{ workflow.vehicle_clusters_over_time.return }}
+    interval_minutes: 10
+    max_gap_minutes: 10
+    min_duration_minutes: 0
+- name: Convert Crs
+  id: reproject_ltd
+  task: convert_crs
+  partial:
+    df: ${{ workflow.color_map.return }}
+    crs: EPSG:4326
+- name: Persist Cluster Episodes
+  id: persist_cluster_episodes
+  task: persist_df
+  partial:
+    root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+    df: ${{ workflow.cluster_episodes.return }}
+    filename: vehicle_cluster_episodes
+    filetype: csv
+- name: Persist Vehicle Minutes
+  id: persist_vehicle_minutes
+  task: persist_df
+  partial:
+    root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+    df: ${{ workflow.vehicle_minutes.return }}
+    filename: vehicle_minutes
+    filetype: csv
+- name: LTD Layer
+  id: ltd_layer
+  task: ecoscope_workflows_ext_custom.tasks.results.create_geojson_layer
+  partial:
+    geodataframe: ${{ workflow.reproject_ltd.return }}
+    legend:
+      title: LTD Percentiles
+      label_column: percentile
+      color_column: percentile_colors
+      sort: ascending
+      label_suffix: null
+    layer_style:
+      auto_highlight: false
+      opacity: 0.025
+      pickable: true
+      filled: true
+      stroked: true
+      extruded: false
+      wireframe: false
+      get_fill_color: percentile_colors
+      get_line_color: '[0, 0, 0]'
+      get_line_width: '0.55'
+      get_elevation: null
+      get_point_radius: 1
+      line_width_units: pixels
+      line_width_scale: 1
+      line_width_min_pixels: 0
+      line_width_max_pixels: null
+      line_miter_limit: 4
+      line_joint_rounded: false
+      elevation_scale: 1
+      point_radius_units: pixels
+      point_radius_scale: 1
+      point_radius_min_pixels: 0
+      point_radius_max_pixels: null
+      billboard: false
+    data_url: null
+- name: Draw Vehicle Table
+  id: draw_vehicle_table
+  task: draw_table
+  partial:
+    dataframe: ${{ workflow.vehicle_minutes.return }}
+    columns: null
+    table_config: null
+- name: Combine Deckgl Map Layers
+  id: deckgl_map_layers
+  task: combine_deckgl_map_layers
+  partial:
+    static_layers: ${{ workflow.spatial_feature_layer.return }}
+    grouped_layers:
+    - ${{ workflow.ltd_layer.return }}
+    - ${{ workflow.scatterplot_layer.return }}
+- name: Clustering Map
+  id: clustering_map
+  task: ecoscope_workflows_ext_custom.tasks.results.draw_map
+  partial:
+    tile_layers: ${{ workflow.base_maps_pydeck.return }}
+    geo_layers: ${{ workflow.deckgl_map_layers.return }}
+    view_state: ${{ workflow.view_state_from_gdf.return }}
+    static: false
+    title: ''
+    legend_style:
+      placement: bottom-right
+    max_zoom: 20
+- name: Persist Vehicle Table
+  id: persist_vehicle_table
+  task: persist_text
+  partial:
+    root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+    text: ${{ workflow.draw_vehicle_table.return }}
+- name: Persist Cluster Map
+  id: persist_cluster_map
+  task: persist_text
+  partial:
+    root_path: ${{ env.ECOSCOPE_WORKFLOWS_RESULTS }}
+    text: ${{ workflow.clustering_map.return }}
+- name: Create Table Widget Single View
+  id: table_widget_single_view
+  task: create_table_widget_single_view
+  partial:
+    data: ${{ workflow.persist_vehicle_table.return }}
+    title: Duration Spent
+- name: Create Map Widget Single View
+  id: map_widget_single_view
+  task: create_map_widget_single_view
+  partial:
+    data: ${{ workflow.persist_cluster_map.return }}
+    title: Vehicle Clustering
+- name: Gather Dashboard
+  id: dashboard
+  task: gather_dashboard
+  partial:
+    widgets:
+    - ${{ workflow.map_widget_single_view.return }}
+    - ${{ workflow.table_widget_single_view.return }}
+    groupers: ${{ workflow.groupers.return }}
+    time_range: ${{ workflow.time_range.return }}
+    details: ${{ workflow.workflow_details.return }}
+rjsf-overrides:
+  uiSchema:
+    ui:order:
+    - workflow_details
+    - time_range
+    - er_connection
+    - base_maps_pydeck
+    - get_subject_group

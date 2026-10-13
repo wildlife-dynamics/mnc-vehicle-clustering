@@ -1,0 +1,6 @@
+studio-run:
+  name: mnc-vehicle-clustering (from Studio)
+  description: The values used with ▶ Run in Ecoscope Studio's designer.
+  params:
+    workflow_details:
+      name: j
