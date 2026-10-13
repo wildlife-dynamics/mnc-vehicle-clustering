@@ -393,7 +393,7 @@ def main(params: dict[str, Any], validate_params_schema: bool = True):
                 "min_time_secs": 1,
                 "max_time_secs": 21600,
                 "min_speed_kmhr": 0.025,
-                "max_speed_kmhr": 100,
+                "max_speed_kmhr": 75,
             },
             **(params.get("to_trajectory") or {}),
         )

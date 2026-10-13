@@ -3,5 +3,7 @@ author:
 - name: Tevin Temu
   organization: Wildlife Dynamics
   email: tevin@wildlifedynamics.com
-description: ''
+description: >-
+  Finds where vehicles from an EarthRanger subject group cluster together over time, and maps those clusters with the vehicles' linear time density over the site's Boundary spatial features.
+  The subject group is chosen from a drop-down of the connected site's subject groups.
 citation: []

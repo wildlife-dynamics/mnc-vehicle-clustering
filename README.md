@@ -1,6 +1,6 @@
 # mnc-vehicle-clustering
 
-mnc-vehicle-clustering
+Finds where vehicles from an EarthRanger subject group cluster together over time, and maps those clusters with the vehicles' linear time density over the site's `Boundary` spatial features. The subject group is chosen from a drop-down of the connected site's subject groups.
 
 ## What it does
 
@@ -88,11 +88,19 @@ You'll be prompted to fill in the following parameters before running.
 
 | Field | Description | Default |
 |---|---|---|
-| Subject Group Name *(required)* | ⚠️ The use of a group with mixed subtypes could lead to unexpected results | — |
+| Subject Group Name *(required)* | A drop-down of the subject groups on the data source chosen under **Connect to EarthRanger**. Pick the data source first; the list loads from it. ⚠️ The use of a group with mixed subtypes could lead to unexpected results | — |
 
 ---
 
 ## Developing
+
+`spec.yaml` is maintained by hand, not by Ecoscope Studio's designer, because it carries an
+`rjsf-overrides` block that Studio doesn't write: it turns **Subject Group Name** into a drop-down
+filled by `EarthRangerEnumResolver` from the selected EarthRanger connection. Saving the design
+from Studio again would replace the spec and drop that block.
+
+**Relocations To Trajectory** drops track segments faster than 75 km/h (previously 100 km/h), so
+implausible GPS jumps don't feed the time density or cluster detection.
 
 ```bash
 # recompile spec.yaml (first time: --install; after that: --update, which bumps VERSION.yaml)
